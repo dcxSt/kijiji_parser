@@ -1,9 +1,11 @@
 # https://www.kijiji.ca/b-appartement-condo/ville-de-montreal/4+1+2__4+1+2+et+coin+detente__5+1+2__5+1+2+et+coin+detente/c37l1700281a27949001?sort=dateDesc&radius=2.0&price=__2600&address=M%C3%A9tro+Laurier%2C+Avenue+Laurier+Est%2C+Montr%C3%A9al%2C+QC&ll=45.52783749999999%2C-73.5889662
 
-
 import requests
 import re
 from bs4 import BeautifulSoup
+import json
+import os
+import notification # pythonista module
 
 def fetch_url_content(url):
     try:
@@ -13,28 +15,15 @@ def fetch_url_content(url):
     except requests.exceptions.RequestException as e:
         return f"Error fetching the URL: {e}"
 
-def parse_list_items(html_content):
-    # Pattern to find <li></li> tags. This simplistic pattern assumes no nested tags within <li>
-    pattern = re.compile(r'<li>(.*?)<\/li>', re.DOTALL)
-    items = pattern.findall(html_content)
-    return items
-
 def get_listings(html_content):
-    soup = BeautifulSoup(html_content, 'lxml')
+    soup = BeautifulSoup(html_content, 'html.parser')
     # Find all <section> elements with 'data-testid="listing-price"' attribute
     sections = soup.find_all('section', attrs={'data-testid': 'listing-card'})
     return [str(section) for section in sections]
 
-
-def parse_listing_price(html_content):
-    soup = BeautifulSoup(html_content, 'lxml')
-    # Find all <p> elements with the specific data-testid attribute
-    prices = soup.find_all('p', {'data-testid': 'listing-price'})
-    # Extract and return the text content of these elements
-    return [price.text for price in prices]
-
 def parse_element(html_content, element_type:str, attrs:dict):
-    soup = BeautifulSoup(html_content, 'lxml')
+    """Return the body of a specific html element from it's attributes"""
+    soup = BeautifulSoup(html_content, 'html.parser')
     els = soup.find_all(element_type, attrs=attrs)
     els = [el.text for el in els]
     if len(els)==0:
@@ -43,8 +32,9 @@ def parse_element(html_content, element_type:str, attrs:dict):
         return els[0]
     return els
 
-def get_href(html_content, element_type:str, attrs:dict):
-    soup = BeautifulSoup(html_content, 'lxml')
+def get_href(html_content:str, element_type:str, attrs:dict):
+    """Return the link of an element with specific attributes"""
+    soup = BeautifulSoup(html_content, 'html.parser')
     links = soup.find_all(element_type, attrs=attrs)
     hrefs = [link.get('href') for link in links if link.has_attr('href')]
     if len(hrefs)==0:
@@ -55,7 +45,8 @@ def get_href(html_content, element_type:str, attrs:dict):
 
 
 def parse_listing(html:str):
-    html
+    """:param html str: A string containing the html inside the listing <li> element.
+    Return a dictionary with essential information about listing."""
     listing = {
             "price":parse_element(html,'p',{'data-testid':'listing-price'}),
             "title":parse_element(html,'h3',{'data-testid':'listing-title'}),
@@ -66,26 +57,42 @@ def parse_listing(html:str):
             }
     return listing
 
-
-"""
-"""
-
-
-
 if __name__ == "__main__":
+    ### Get kijiji page information
     url = "https://www.kijiji.ca/b-appartement-condo/ville-de-montreal/4+1+2__4+1+2+et+coin+detente__5+1+2__5+1+2+et+coin+detente/c37l1700281a27949001?sort=dateDesc&radius=2.0&price=__2600&address=M%C3%A9tro+Laurier%2C+Avenue+Laurier+Est%2C+Montr%C3%A9al%2C+QC&ll=45.52783749999999%2C-73.5889662"
     content = fetch_url_content(url)
-    #listings = parse_listing_cards(content)
-    #print(listings)
-    #print(len(listings))
     listings = get_listings(content)
     parsed_listings = [parse_listing(l) for l in listings]
-    print(parsed_listings)
-    #print(len(listings))
-    #for l in listings:
-    #    price_text = parse_listing_price(l)
-    #    print(price_text)
-    ##print(listings)
-
-    ##print(len(listings))
-
+    ### Get locally stored listing information
+    saved_listings = []
+    LISTING_PATH = "listings.json"
+    if os.path.exists(LISTING_PATH):
+        with open(LISTING_PATH,"r") as f:
+            saved_listings = json.loads(f.read()) 
+    else:
+        print("No listings saved, proceeding.")
+    saved_links = [l['link'] for l in saved_listings]
+    new_listings = [] # If this is not empty after update, we'll alert user
+    # update then serialize saved_listings
+    for listing in parsed_listings:
+        if listing['link'] not in saved_links:
+            saved_listings.append(listing)
+            new_listings.append(listing)
+    with open(LISTING_PATH,"w") as f:
+        json.dump(saved_listings,f)
+    if new_listings == []:
+        print("No new listings found.")
+    else:
+        print("Listings updated, alerting user.")
+        notification.schedule(
+            title=f'New Listing ({len(new_listings)})',
+            message="",
+            delay=0, #seconds
+            sound_name='default'
+                )
+        print(f"\nSearch url: {url}\n")
+    for l in new_listings:
+        print(f"title: {l['title']}")
+        print(f"link: {l['link']}")
+        print(f"price: {l['price']}\n")
+    
